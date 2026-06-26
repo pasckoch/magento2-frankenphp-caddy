@@ -44,7 +44,7 @@ sudo setfacl -R -d -m u:YOUR_CLI_USER:rwx -m u:frankenphp:rwx var/ generated/ pu
 
     Reload your application server:
 
-Bash
+```bash
 
 sudo systemctl reload frankenphp
 # or caddy reload --config /etc/caddy/Caddyfile
