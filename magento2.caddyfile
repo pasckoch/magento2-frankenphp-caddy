@@ -1,0 +1,156 @@
+magento2.localhost.com {
+    # Document root pointing strictly to Magento's pub/ folder
+    root * /var/www/html/magento2/pub
+    tls internal
+    
+    # Enable compression
+    encode zstd gzip
+
+    # Global Security Headers
+    header {
+        X-Content-Type-Options "nosniff"
+        X-XSS-Protection "1; mode=block"
+        X-Frame-Options "SAMEORIGIN"
+    }
+
+    # Custom Error Pages
+    handle_errors {
+        @40x_403 expression `{err.status} == 404 || {err.status} == 403`
+        rewrite @40x_403 /errors/404.php
+    }
+
+    # =========================================================================
+    # 1. BANNED & SENSITIVE LOCATIONS
+    # =========================================================================
+    @banned {
+        path /.user.ini
+        path_regexp (\.php$|\.phtml$|\.htaccess$|\.htpasswd$|\.git)
+        not path /index.php /get.php /static.php /errors/report.php /errors/404.php /errors/503.php /health_check.php /setup/*.php /update/*.php
+    }
+    respond @banned "Access Denied" 403
+
+    @forbidden_pub_paths {
+        path /pub/media/downloadable/*
+        path /pub/media/customer/*
+        path /pub/media/import/*
+        path /pub/media/custom_options/*
+        path /pub/media/theme_customization/*.xml
+        path /errors/*.xml
+    }
+    respond @forbidden_pub_paths "Access Denied" 403
+
+    @forbidden_media_roots {
+        path /media/customer/*
+        path /media/downloadable/*
+        path /media/import/*
+        path /media/custom_options/*
+        path /media/theme_customization/*.xml
+    }
+    respond @forbidden_media_roots "Access Denied" 403
+
+
+    # =========================================================================
+    # 2. SETUP & UPDATE UTILITIES
+    # =========================================================================
+    @setup_index path /setup/index.php
+    respond @setup_index "Access Denied" 403
+
+    @setup_restricted {
+        path /setup/*
+        not path /setup/pub/*
+    }
+    respond @setup_restricted "Access Denied" 403
+
+    @setup_pub path /setup/pub/*
+    header @setup_pub X-Frame-Options "SAMEORIGIN"
+
+    @update_restricted {
+        path /update/*
+        not path /update/pub/*
+        not path /update/index.php
+    }
+    respond @update_restricted "Access Denied" 403
+
+    @update_pub path /update/pub/*
+    header @update_pub X-Frame-Options "SAMEORIGIN"
+
+
+    # =========================================================================
+    # 3. STATIC ASSETS BLOCK (Location /static/)
+    # =========================================================================
+
+    # Phase 1: Strip version token first, globally modifying the request path
+    @static_versioned path_regexp versioned ^/static/version\d+/(.+)
+    rewrite @static_versioned /static/{re.versioned.1}
+
+    # Phase 2: Route remaining static requests sequentially
+    route /static/* {
+        # Cache headers for valid file formats
+        @static_cacheable path *.ico *.jpg *.jpeg *.png *.gif *.svg *.svgz *.webp *.avif *.avifs *.js *.css *.eot *.ttf *.otf *.woff *.woff2 *.html *.json *.webmanifest
+        header @static_cacheable {
+            Cache-Control "public, max-age=31536000, immutable"
+            X-Frame-Options "SAMEORIGIN"
+        }
+
+        @static_no_cache path *.zip *.gz *.gzip *.bz2 *.csv *.xml
+        header @static_no_cache {
+            Cache-Control "no-store"
+            X-Frame-Options "SAMEORIGIN"
+            Expires "0"
+        }
+
+        # If the file does not exist on disk, process the fallback router
+        @static_missing not file {path}
+        @extract_resource path_regexp static_res ^/static/(.+)
+        rewrite @static_missing /static.php?resource={re.static_res.1}
+    }
+
+    @static_files path /static/*
+    header @static_files X-Frame-Options "SAMEORIGIN"
+
+
+    # =========================================================================
+    # 4. MEDIA FILES BLOCK (Location /media/)
+    # =========================================================================
+    @media_cacheable {
+        path /media/*
+        path *.ico *.jpg *.jpeg *.png *.gif *.svg *.svgz *.webp *.avif *.avifs *.js *.css *.eot *.ttf *.otf *.woff *.woff2
+    }
+    header @media_cacheable {
+        Cache-Control "public, max-age=31536000"
+        X-Frame-Options "SAMEORIGIN"
+    }
+
+    @media_no_cache {
+        path /media/*
+        path *.zip *.gz *.gzip *.bz2 *.csv *.xml
+    }
+    header @media_no_cache {
+        Cache-Control "no-store"
+        X-Frame-Options "SAMEORIGIN"
+        Expires "0"
+    }
+
+    @media_missing {
+        path /media/*
+        not file {path}
+    }
+    rewrite @media_missing /get.php?resource={path}
+
+
+    # =========================================================================
+    # 5. GLOBAL ROOT & MAIN PHP APPLICATION ROUTING
+    # =========================================================================
+    @magento_fallback {
+        not file {path}
+        not path /static/* /media/*
+    }
+    rewrite @magento_fallback /index.php?{query}
+
+    # Execution Engines
+    file_server
+    php_server {
+        env PHP_FLAG "session.auto_start=off"
+        env PHP_VALUE "memory_limit=756M\nmax_execution_time=18000"
+    }
+}
